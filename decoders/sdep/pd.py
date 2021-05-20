@@ -96,7 +96,7 @@ class SdepStateMachine:
                 self.state = 'START'
             self.ss = ss
             self.es = es
-            return self.annotations[3], char
+            return self.annotations[3], [char]
 
 MOSI_ROWS = (0, 1, 2, 3)
 MISO_ROWS = (4, 5, 6, 7)
