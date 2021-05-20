@@ -79,6 +79,8 @@ class SdepStateMachine:
             payload_len = b & 0b11111
             self.payload_len = payload_len
             self.state = 'PAYLOAD'
+            if payload_len == 0:
+                self.state = 'START'
             self.ss = ss
             self.es = es
             return (
@@ -148,12 +150,12 @@ class Decoder(srd.Decoder):
         mosi_anno, mosi_data = self.mosi_state_machine.decode(ss, es, mosi)
         miso_anno, miso_data = self.miso_state_machine.decode(ss, es, miso)
 
-        if mosi_anno:
+        if mosi_anno is not None:
             self.put(
                 self.mosi_state_machine.ss,
                 self.mosi_state_machine.es,
                 self.out_ann, [mosi_anno, mosi_data])
-        if miso_anno:
+        if miso_anno is not None:
             self.put(
                 self.miso_state_machine.ss,
                 self.miso_state_machine.es,
