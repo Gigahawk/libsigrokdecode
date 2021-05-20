@@ -127,12 +127,14 @@ class Decoder(srd.Decoder):
     )
 
     def __init__(self):
-        self.mosi_state_machine = SdepStateMachine(MOSI_ROWS)
-        self.miso_state_machine = SdepStateMachine(MISO_ROWS)
-        pass
+        self.reset()
 
     def start(self):
         self.out_ann = self.register(srd.OUTPUT_ANN)
+
+    def reset(self):
+        self.mosi_state_machine = SdepStateMachine(MOSI_ROWS)
+        self.miso_state_machine = SdepStateMachine(MISO_ROWS)
 
     def metadata(self, key, value):
         if key == srd.SRD_CONF_SAMPLERATE:
