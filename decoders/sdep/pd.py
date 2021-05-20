@@ -21,6 +21,85 @@
 import sigrokdecode as srd
 from binascii import hexlify
 
+class SdepStateMachine:
+    def __init__(self, annotations):
+        self.annotations = annotations
+        self.reset()
+
+    def reset(self):
+        self.state = 'START'
+        self.command_id = [None, None]
+        self.command_id_ss = None
+        self.payload_len = None
+        self.ss = None
+        self.es = None
+
+    def message_type(self, code):
+        if code == 0x10:
+            return ['Command', 'cmd']
+        if code == 0x20:
+            return ['Response', 'rsp']
+        if code == 0x40:
+            return ['Alert', 'alr']
+        if code == 0x80:
+            return ['Error', 'err']
+        return None
+
+    def decode(self, ss, es, b):
+        if self.state == 'START':
+            message_type = self.message_type(b)
+            if not message_type:
+                return None, None
+            self.state = 'COMMAND_ID1'
+            self.ss = ss
+            self.es = es
+            return self.annotations[0], message_type
+
+        if self.state == 'COMMAND_ID1':
+            self.command_id[0] = b
+            self.state = 'COMMAND_ID2'
+            self.ss = ss
+            return None, None
+
+        if self.state == 'COMMAND_ID2':
+            self.command_id[1] = b
+            cmd_id = hexlify(bytes(reversed(self.command_id))).decode()
+            self.state = 'PAYLOAD_LEN'
+            self.es = es
+            return (
+                self.annotations[1],
+                [
+                    'Command ID: 0x{}'.format(cmd_id),
+                    'cmd_id: {}'.format(cmd_id)
+                ]
+            )
+
+        if self.state == 'PAYLOAD_LEN':
+            more = int(bool(b & 0x80))
+            payload_len = b & 0b11111
+            self.payload_len = payload_len
+            self.state = 'PAYLOAD'
+            self.ss = ss
+            self.es = es
+            return (
+                self.annotations[2],
+                [
+                    'Payload Length: {}, More: {}'.format(payload_len, more),
+                    'len: {}, more: {}'.format(payload_len, more)
+                ]
+            )
+
+        if self.state == 'PAYLOAD':
+            self.payload_len -= 1
+            char = repr(chr(b)).strip("'")
+            if self.payload_len <= 0:
+                self.state = 'START'
+            self.ss = ss
+            self.es = es
+            return self.annotations[3], char
+
+MOSI_ROWS = (0, 1, 2, 3)
+MISO_ROWS = (4, 5, 6, 7)
 
 class Decoder(srd.Decoder):
     api_version = 3
@@ -33,22 +112,24 @@ class Decoder(srd.Decoder):
     outputs = []
     tags = ['Adafruit']
     annotations = (
-        ('msg_type', 'Message Type'),
-        ('cmd_id', 'Command ID'),
-        ('payload_len', 'Payload Length'),
-        ('payload', 'Payload'),
+        ('mosi_msg_type', 'MOSI Message Type'),
+        ('mosi_cmd_id', 'MOSI Command ID'),
+        ('mosi_payload_len', 'MOSI Payload Length'),
+        ('mosi_payload', 'MOSI Payload'),
+        ('miso_msg_type', 'MISO Message Type'),
+        ('miso_cmd_id', 'MISO Command ID'),
+        ('miso_payload_len', 'MISO Payload Length'),
+        ('miso_payload', 'MISO Payload'),
     )
     annotation_rows = (
-        ('mosi_packets', 'MOSI Packets', (0, 1, 2, 3,)),
+        ('mosi_packets', 'MOSI Packets', MISO_ROWS),
+        ('miso_packets', 'MISO Packets', MOSI_ROWS),
     )
 
     def __init__(self):
-        self.reset()
-
-    def reset(self):
-        self.mosi_state = 'START'
-        self.mosi_command_id = [None, None]
-        self.mosi_command_id_ss = None
+        self.mosi_state_machine = SdepStateMachine(MOSI_ROWS)
+        self.miso_state_machine = SdepStateMachine(MISO_ROWS)
+        pass
 
     def start(self):
         self.out_ann = self.register(srd.OUTPUT_ANN)
@@ -61,36 +142,18 @@ class Decoder(srd.Decoder):
         ptype, mosi, miso = data
         if ptype != 'DATA':
             return
+        self.put(ss, es, self.out_ann, [0, ['a']])
 
-        if self.mosi_state == 'START' and mosi == 0x10:
-            self.put(ss, es, self.out_ann, [0, ['Command', 'cmd']])
-            self.mosi_state = 'COMMAND_ID1'
-            return
+        mosi_anno, mosi_data = self.mosi_state_machine.decode(ss, es, mosi)
+        miso_anno, miso_data = self.miso_state_machine.decode(ss, es, miso)
 
-        if self.mosi_state == 'COMMAND_ID1':
-            self.mosi_command_id[0] = mosi
-            self.mosi_state = 'COMMAND_ID2'
-            self.mosi_command_id_ss = ss
-            return
-
-        if self.mosi_state == 'COMMAND_ID2':
-            self.mosi_command_id[1] = mosi
-            cmd_id = hexlify(bytes(reversed(self.mosi_command_id))).decode()
-            self.put(self.mosi_command_id_ss, es, self.out_ann, [1, ['Command ID: 0x{}'.format(cmd_id), 'cmd_id: {}'.format(cmd_id)]])
-            self.mosi_state = 'PAYLOAD_LEN'
-            return
-
-        if self.mosi_state == 'PAYLOAD_LEN':
-            more = int(bool(mosi & 0x80))
-            payload_len = mosi & 0b11111
-            self.put(ss, es, self.out_ann, [2, ['Payload Length: {}, More: {}'.format(payload_len, more), 'len: {}, more: {}'.format(payload_len, more)]])
-            self.mosi_state = 'PAYLOAD'
-            self.payload_len = payload_len
-            return
-
-        if self.mosi_state == 'PAYLOAD':
-            self.payload_len -= 1
-            self.put(ss, es, self.out_ann, [3, [chr(mosi)]])
-            if self.payload_len == 0:
-                self.mosi_state = 'START'
-            return
+        if mosi_anno:
+            self.put(
+                self.mosi_state_machine.ss,
+                self.mosi_state_machine.es,
+                self.out_ann, [mosi_anno, mosi_data])
+        if miso_anno:
+            self.put(
+                self.miso_state_machine.ss,
+                self.miso_state_machine.es,
+                self.out_ann, [miso_anno, miso_data])
