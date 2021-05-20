@@ -122,8 +122,8 @@ class Decoder(srd.Decoder):
         ('miso_payload', 'MISO Payload'),
     )
     annotation_rows = (
-        ('mosi_packets', 'MOSI Packets', MISO_ROWS),
-        ('miso_packets', 'MISO Packets', MOSI_ROWS),
+        ('miso_packets', 'MISO Packets', MISO_ROWS),
+        ('mosi_packets', 'MOSI Packets', MOSI_ROWS),
     )
 
     def __init__(self):
@@ -144,7 +144,6 @@ class Decoder(srd.Decoder):
         ptype, mosi, miso = data
         if ptype != 'DATA':
             return
-        self.put(ss, es, self.out_ann, [0, ['a']])
 
         mosi_anno, mosi_data = self.mosi_state_machine.decode(ss, es, mosi)
         miso_anno, miso_data = self.miso_state_machine.decode(ss, es, miso)
